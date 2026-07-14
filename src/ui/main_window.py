@@ -11,10 +11,9 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from src.engine.export import STLExporter
-from src.ui.image_viewer import ImageViewer
-from src.engine.mesh_generator import MeshGenerator
 from src.engine.relief_generator import ReliefGenerator
+from src.engine.relief_generator_v2 import ReliefGeneratorV2
+from src.ui.image_viewer import ImageViewer
 
 
 class MainWindow(QMainWindow):
@@ -162,23 +161,16 @@ class MainWindow(QMainWindow):
             self.export_button.setEnabled(False)
             self.export_button.setText("Generating STL...")
 
-            mesh = MeshGenerator.create_slice_mesh(
+            ReliefGeneratorV2.generate(
                 image_path=self.image_path,
-                width_mm=180.0,
-                height_mm=130.0,
+                output_path=output_path,
                 slice_count=self.slice_slider.value(),
-                slice_thickness_mm=0.8,
-                base_depth_mm=2.0,
-                relief_depth_mm=self.height_slider.value(),
-                profile_samples=180,
             )
-
-            STLExporter.export(mesh, output_path)
 
             QMessageBox.information(
                 self,
                 "Export complete",
-                "The STL file was created successfully.",
+                "The STL file was created successfully with Engine V2.",
             )
 
         except Exception as error:
