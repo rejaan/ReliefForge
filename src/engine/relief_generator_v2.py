@@ -3,26 +3,27 @@ from pathlib import Path
 import trimesh
 
 from src.engine.export import STLExporter
-from src.engine.geometry.mesh_builder import MeshBuilder
 from src.engine.geometry.profile_generator import ProfileGenerator
+from src.engine.geometry.slice_mesh_builder import SliceMeshBuilder
 from src.engine.geometry.trimesh_builder import TrimeshBuilder
 from src.engine.processors.image_processing import ImageProcessor
 from src.models.relief_settings import ReliefSettings
 
 
 class ReliefGeneratorV2:
-    """Coordinates the complete ReliefForge V2 pipeline."""
+    """Coordinates the ReliefForge sliced-relief pipeline."""
 
     @staticmethod
     def generate_mesh(
         image_path: str,
         settings: ReliefSettings,
     ) -> trimesh.Trimesh:
-
         path = Path(image_path)
 
         if not path.exists():
-            raise FileNotFoundError(f"Image not found: {image_path}")
+            raise FileNotFoundError(
+                f"Image not found: {image_path}"
+            )
 
         height_map = ImageProcessor.load(str(path))
 
@@ -40,18 +41,21 @@ class ReliefGeneratorV2:
             slice_count=settings.slice_count,
         )
 
-        mesh_data = MeshBuilder.build(
+        mesh_data = SliceMeshBuilder.build(
             profiles=profiles,
             model_width_mm=settings.model_width_mm,
             base_thickness_mm=settings.base_thickness_mm,
             relief_depth_mm=settings.relief_depth_mm,
+            slice_thickness_mm=settings.slice_thickness_mm,
+            slice_spacing_mm=settings.slice_spacing_mm,
+            depth_contrast=settings.depth_contrast,
             invert=settings.invert,
         )
 
         mesh = TrimeshBuilder.build(mesh_data)
 
         if mesh.is_empty:
-            raise ValueError("Generated mesh is empty.")
+            raise ValueError("Generated slice mesh is empty.")
 
         return mesh
 
@@ -61,7 +65,6 @@ class ReliefGeneratorV2:
         output_path: str,
         settings: ReliefSettings,
     ) -> trimesh.Trimesh:
-
         mesh = ReliefGeneratorV2.generate_mesh(
             image_path=image_path,
             settings=settings,

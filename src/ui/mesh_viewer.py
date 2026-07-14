@@ -1,7 +1,12 @@
 import numpy as np
 import pyqtgraph.opengl as gl
 import trimesh
-from PySide6.QtWidgets import QHBoxLayout, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QHBoxLayout,
+    QPushButton,
+    QVBoxLayout,
+    QWidget,
+)
 
 
 class MeshViewer(QWidget):
@@ -29,12 +34,20 @@ class MeshViewer(QWidget):
         self.fit_button = QPushButton("Zoom to Fit")
         self.fit_button.clicked.connect(self.zoom_to_fit)
 
+        self.front_button = QPushButton("Front")
+        self.front_button.clicked.connect(self.front_view)
+
+        self.side_button = QPushButton("Side")
+        self.side_button.clicked.connect(self.side_view)
+
         self.wireframe_button = QPushButton("Wireframe")
         self.wireframe_button.setCheckable(True)
         self.wireframe_button.toggled.connect(self.set_wireframe)
 
         toolbar.addWidget(self.reset_button)
         toolbar.addWidget(self.fit_button)
+        toolbar.addWidget(self.front_button)
+        toolbar.addWidget(self.side_button)
         toolbar.addWidget(self.wireframe_button)
         toolbar.addStretch()
 
@@ -52,7 +65,6 @@ class MeshViewer(QWidget):
         grid = gl.GLGridItem()
         grid.setSize(300, 300)
         grid.setSpacing(10, 10)
-        grid.translate(0, 0, 0)
         self.view.addItem(grid)
 
     def _add_axes(self) -> None:
@@ -73,6 +85,7 @@ class MeshViewer(QWidget):
             self.current_mesh.vertices,
             dtype=np.float32,
         )
+
         faces = np.asarray(
             self.current_mesh.faces,
             dtype=np.uint32,
@@ -89,19 +102,25 @@ class MeshViewer(QWidget):
             drawFaces=True,
             drawEdges=self.wireframe_enabled,
             edgeColor=(0.2, 0.7, 1.0, 1.0),
-            color=(0.72, 0.76, 0.82, 1.0),
+            color=(0.78, 0.80, 0.86, 1.0),
             shader="shaded",
         )
 
         self.view.addItem(self.mesh_item)
+
         self._center_mesh()
-        self.zoom_to_fit()
+        self.default_relief_view()
 
     def load_stl(self, filename: str) -> None:
-        loaded = trimesh.load(filename, force="mesh")
+        loaded = trimesh.load(
+            filename,
+            force="mesh",
+        )
 
         if not isinstance(loaded, trimesh.Trimesh):
-            raise ValueError("The file does not contain a valid mesh.")
+            raise ValueError(
+                "The file does not contain a valid mesh."
+            )
 
         self.show_mesh(loaded)
 
@@ -120,31 +139,59 @@ class MeshViewer(QWidget):
             -float(center[2]),
         )
 
-    def zoom_to_fit(self) -> None:
+    def _camera_distance(self, factor: float = 1.55) -> float:
         if self.current_mesh is None:
-            self.reset_view()
-            return
+            return 250.0
 
         largest_dimension = max(
-            float(value) for value in self.current_mesh.extents
+            float(value)
+            for value in self.current_mesh.extents
         )
 
-        camera_distance = max(
-            80.0,
-            largest_dimension * 2.3,
+        return max(
+            55.0,
+            largest_dimension * factor,
         )
+
+    def default_relief_view(self) -> None:
+        """Shows the relief from a useful angled perspective."""
 
         self.view.setCameraPosition(
-            distance=camera_distance,
-            elevation=28,
-            azimuth=35,
+            distance=self._camera_distance(1.55),
+            elevation=20,
+            azimuth=-55,
+        )
+
+    def zoom_to_fit(self) -> None:
+        self.view.setCameraPosition(
+            distance=self._camera_distance(1.35),
+            elevation=22,
+            azimuth=-55,
         )
 
     def reset_view(self) -> None:
         self.view.setCameraPosition(
-            distance=300,
-            elevation=28,
-            azimuth=35,
+            distance=250,
+            elevation=22,
+            azimuth=-55,
+        )
+
+    def front_view(self) -> None:
+        """Looks almost straight at the relief image."""
+
+        self.view.setCameraPosition(
+            distance=self._camera_distance(1.35),
+            elevation=0,
+            azimuth=-90,
+        )
+
+    def side_view(self) -> None:
+        """Shows the depth profile of the lamellae."""
+
+        self.view.setCameraPosition(
+            distance=self._camera_distance(1.35),
+            elevation=8,
+            azimuth=0,
         )
 
     def set_wireframe(self, enabled: bool) -> None:

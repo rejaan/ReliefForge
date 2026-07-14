@@ -21,8 +21,18 @@ from src.ui.sidebar import Sidebar
 class MainWindow(QMainWindow):
     """Main application window for ReliefForge."""
 
+    SUPPORTED_IMAGE_EXTENSIONS = {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".bmp",
+        ".webp",
+    }
+
     def __init__(self):
         super().__init__()
+
+        self.setAcceptDrops(True)
 
         self.image_path: str | None = None
         self.image_resolution: tuple[int, int] | None = None
@@ -32,7 +42,7 @@ class MainWindow(QMainWindow):
         self.mesh_worker: MeshWorker | None = None
         self.pending_mesh_update = False
 
-        self.setWindowTitle("ReliefForge v0.3.4 – Background Processing")
+        self.setWindowTitle("ReliefForge v0.3.5 – Drag & Drop")
         self.resize(1550, 920)
         self.setMinimumSize(1150, 720)
 
@@ -44,7 +54,9 @@ class MainWindow(QMainWindow):
         self._build_interface()
         self._connect_signals()
 
-        self.statusBar().showMessage("Ready")
+        self.statusBar().showMessage(
+            "Ready — open an image or drag one into ReliefForge"
+        )
 
     def _build_interface(self) -> None:
         self.image_viewer = ImageViewer()
@@ -64,8 +76,13 @@ class MainWindow(QMainWindow):
         viewer_splitter.setStretchFactor(1, 1)
         viewer_splitter.setSizes([600, 600])
 
-        self.sidebar.layout().insertWidget(
-            self.sidebar.layout().count() - 2,
+        sidebar_layout = self.sidebar.layout()
+
+        if sidebar_layout is None:
+            raise RuntimeError("Sidebar layout is missing.")
+
+        sidebar_layout.insertWidget(
+            sidebar_layout.count() - 2,
             self.inspector,
         )
 
@@ -93,14 +110,33 @@ class MainWindow(QMainWindow):
             "Images (*.png *.jpg *.jpeg *.bmp *.webp)",
         )
 
-        if not filename:
+        if filename:
+            self.load_image(filename)
+
+    def load_image(self, filename: str) -> None:
+        path = Path(filename)
+
+        if not path.exists():
+            QMessageBox.warning(
+                self,
+                "Image not found",
+                f"The selected image does not exist:\n{filename}",
+            )
             return
 
-        self.image_path = filename
+        if path.suffix.lower() not in self.SUPPORTED_IMAGE_EXTENSIONS:
+            QMessageBox.warning(
+                self,
+                "Unsupported image",
+                "Please use PNG, JPG, JPEG, BMP or WEBP.",
+            )
+            return
+
+        self.image_path = str(path)
         self.current_mesh = None
         self.pending_mesh_update = False
 
-        self.image_viewer.load_image(filename)
+        self.image_viewer.load_image(str(path))
 
         pixmap = self.image_viewer._original_pixmap
 
@@ -113,7 +149,7 @@ class MainWindow(QMainWindow):
             self.image_resolution = None
 
         self.inspector.clear()
-        self.inspector.set_image(Path(filename).name)
+        self.inspector.set_image(path.name)
 
         if self.image_resolution is not None:
             self.inspector.set_resolution(
@@ -122,7 +158,7 @@ class MainWindow(QMainWindow):
             )
 
         self.statusBar().showMessage(
-            f"Image loaded: {Path(filename).name}"
+            f"Image loaded: {path.name}"
         )
 
         self.update_live_views()
@@ -179,12 +215,10 @@ class MainWindow(QMainWindow):
 
         self.pending_mesh_update = False
 
-        settings = self.sidebar.settings()
-
         self.mesh_thread = QThread(self)
         self.mesh_worker = MeshWorker(
             image_path=self.image_path,
-            settings=settings,
+            settings=self.sidebar.settings(),
         )
 
         self.mesh_worker.moveToThread(self.mesh_thread)
@@ -222,8 +256,6 @@ class MainWindow(QMainWindow):
         mesh: trimesh.Trimesh,
         generation_time: float,
     ) -> None:
-        # Wurden während der Berechnung Regler verändert,
-        # wird dieses inzwischen veraltete Ergebnis nicht angezeigt.
         if self.pending_mesh_update:
             self.statusBar().showMessage(
                 "Applying newer settings..."
@@ -231,8 +263,12 @@ class MainWindow(QMainWindow):
             return
 
         self.current_mesh = mesh
+
         self.mesh_viewer.show_mesh(mesh)
-        self.inspector.update_mesh(mesh, generation_time)
+        self.inspector.update_mesh(
+            mesh,
+            generation_time,
+        )
 
         self.statusBar().showMessage(
             f"Ready — {len(mesh.vertices):,} vertices, "
@@ -259,7 +295,10 @@ class MainWindow(QMainWindow):
 
         if self.pending_mesh_update:
             self.pending_mesh_update = False
-            QTimer.singleShot(0, self.start_mesh_generation)
+            QTimer.singleShot(
+                0,
+                self.start_mesh_generation,
+            )
 
     def export_stl(self) -> None:
         if not self.image_path:
@@ -323,7 +362,46 @@ class MainWindow(QMainWindow):
                 str(error),
             )
 
+    def dragEnterEvent(self, event) -> None:
+        mime_data = event.mimeData()
+
+        if not mime_data.hasUrls():
+            event.ignore()
+            return
+
+        urls = mime_data.urls()
+
+        if not urls:
+            event.ignore()
+            return
+
+        filename = urls[0].toLocalFile()
+        suffix = Path(filename).suffix.lower()
+
+        if suffix in self.SUPPORTED_IMAGE_EXTENSIONS:
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event) -> None:
+        urls = event.mimeData().urls()
+
+        if not urls:
+            event.ignore()
+            return
+
+        filename = urls[0].toLocalFile()
+
+        if not filename:
+            event.ignore()
+            return
+
+        self.load_image(filename)
+        event.acceptProposedAction()
+
     def closeEvent(self, event) -> None:
+        self.live_update_timer.stop()
+
         if self.mesh_thread is not None:
             self.mesh_thread.quit()
             self.mesh_thread.wait(3000)
