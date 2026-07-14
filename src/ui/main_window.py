@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QSplitter,
 )
 
+from src.engine.analyzer.analysis_engine import AnalysisEngine
 from src.engine.export import STLExporter
 from src.engine.relief_generator import ReliefGenerator
 from src.ui.image_viewer import ImageViewer
@@ -37,19 +38,22 @@ class MainWindow(QMainWindow):
         self.image_path: str | None = None
         self.image_resolution: tuple[int, int] | None = None
         self.current_mesh: trimesh.Trimesh | None = None
+        self.analysis_result = None
 
         self.mesh_thread: QThread | None = None
         self.mesh_worker: MeshWorker | None = None
         self.pending_mesh_update = False
 
-        self.setWindowTitle("ReliefForge v0.3.5 – Drag & Drop")
+        self.setWindowTitle("ReliefForge – Smart Analysis")
         self.resize(1550, 920)
         self.setMinimumSize(1150, 720)
 
         self.live_update_timer = QTimer(self)
         self.live_update_timer.setSingleShot(True)
         self.live_update_timer.setInterval(400)
-        self.live_update_timer.timeout.connect(self.update_live_views)
+        self.live_update_timer.timeout.connect(
+            self.update_live_views
+        )
 
         self._build_interface()
         self._connect_signals()
@@ -82,7 +86,7 @@ class MainWindow(QMainWindow):
             raise RuntimeError("Sidebar layout is missing.")
 
         sidebar_layout.insertWidget(
-            sidebar_layout.count() - 2,
+            sidebar_layout.count() - 3,
             self.inspector,
         )
 
@@ -97,10 +101,21 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(main_splitter)
 
     def _connect_signals(self) -> None:
-        self.sidebar.open_image_requested.connect(self.open_image)
-        self.sidebar.refresh_requested.connect(self.update_live_views)
-        self.sidebar.export_requested.connect(self.export_stl)
-        self.sidebar.settings_changed.connect(self.schedule_live_update)
+        self.sidebar.open_image_requested.connect(
+            self.open_image
+        )
+        self.sidebar.refresh_requested.connect(
+            self.update_live_views
+        )
+        self.sidebar.export_requested.connect(
+            self.export_stl
+        )
+        self.sidebar.apply_smart_requested.connect(
+            self.apply_smart_settings
+        )
+        self.sidebar.settings_changed.connect(
+            self.schedule_live_update
+        )
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -135,8 +150,12 @@ class MainWindow(QMainWindow):
         self.image_path = str(path)
         self.current_mesh = None
         self.pending_mesh_update = False
+        self.analysis_result = None
+        self.sidebar.enable_smart_apply(False)
 
         self.image_viewer.load_image(str(path))
+
+        self._run_smart_analysis(str(path))
 
         pixmap = self.image_viewer._original_pixmap
 
@@ -162,6 +181,87 @@ class MainWindow(QMainWindow):
         )
 
         self.update_live_views()
+
+    def _run_smart_analysis(self, image_path: str) -> None:
+        try:
+            result = AnalysisEngine.analyze(image_path)
+            self.analysis_result = result
+            self.sidebar.enable_smart_apply(True)
+
+            print()
+            print("=" * 40)
+            print("SMART IMAGE ANALYSIS")
+            print("=" * 40)
+            print(
+                f"Type          : "
+                f"{result.classification.image_type}"
+            )
+            print(
+                f"Confidence    : "
+                f"{result.classification.confidence:.2f}"
+            )
+            print(
+                f"Detail Score  : "
+                f"{result.analysis.detail_score:.2f}"
+            )
+            print(
+                f"Edge Density  : "
+                f"{result.analysis.edge_density:.3f}"
+            )
+            print(
+                f"Contrast      : "
+                f"{result.analysis.contrast:.1f}"
+            )
+            print()
+            print("Suggested Settings")
+            print(
+                f"Slices        : "
+                f"{result.settings.slice_count}"
+            )
+            print(
+                f"Depth         : "
+                f"{result.settings.relief_depth_mm}"
+            )
+            print(
+                f"Contrast      : "
+                f"{result.settings.depth_contrast}"
+            )
+            print(
+                f"Cutoff        : "
+                f"{result.settings.background_cutoff}"
+            )
+            print(
+                f"Blur Kernel   : "
+                f"{result.settings.blur_kernel}"
+            )
+            print("=" * 40)
+            print()
+
+        except Exception as error:
+            self.analysis_result = None
+            self.sidebar.enable_smart_apply(False)
+            print("Analysis failed:", error)
+
+    def apply_smart_settings(self) -> None:
+        if self.analysis_result is None:
+            QMessageBox.information(
+                self,
+                "No analysis",
+                "Open an image first so ReliefForge can analyze it.",
+            )
+            return
+
+        self.sidebar.apply_settings(
+            self.analysis_result.settings
+        )
+
+        image_type = (
+            self.analysis_result.classification.image_type
+        )
+
+        self.statusBar().showMessage(
+            f"Applied suggested settings for: {image_type}"
+        )
 
     def schedule_live_update(self) -> None:
         if not self.image_path:
@@ -224,7 +324,6 @@ class MainWindow(QMainWindow):
         self.mesh_worker.moveToThread(self.mesh_thread)
 
         self.mesh_thread.started.connect(self.mesh_worker.run)
-
         self.mesh_worker.finished.connect(self._on_mesh_ready)
         self.mesh_worker.failed.connect(self._on_mesh_failed)
 
@@ -263,7 +362,6 @@ class MainWindow(QMainWindow):
             return
 
         self.current_mesh = mesh
-
         self.mesh_viewer.show_mesh(mesh)
         self.inspector.update_mesh(
             mesh,
@@ -276,9 +374,11 @@ class MainWindow(QMainWindow):
             f"{generation_time:.2f} s"
         )
 
-    def _on_mesh_failed(self, error_text: str) -> None:
+    def _on_mesh_failed(
+        self,
+        error_text: str,
+    ) -> None:
         self.current_mesh = None
-
         self.statusBar().showMessage(
             "Mesh generation failed"
         )

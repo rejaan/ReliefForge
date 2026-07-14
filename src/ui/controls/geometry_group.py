@@ -1,5 +1,6 @@
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QLabel,
     QSlider,
@@ -8,7 +9,7 @@ from PySide6.QtWidgets import (
 
 
 class GeometryGroup(QFrame):
-    """Geometry controls."""
+    """Geometry and base-plate controls."""
 
     settings_changed = Signal()
 
@@ -16,44 +17,147 @@ class GeometryGroup(QFrame):
         super().__init__()
 
         self.setObjectName("geometryGroup")
+        self.setStyleSheet(
+            """
+            QFrame#geometryGroup {
+                background-color: #25262a;
+                border: 1px solid #34373d;
+                border-radius: 8px;
+            }
+            """
+        )
 
-        self.setStyleSheet("""
-        QFrame#geometryGroup{
-            background:#25262a;
-            border:1px solid #34373d;
-            border-radius:8px;
-        }
-        """)
+        self._build_interface()
+        self._connect_signals()
 
+    def _build_interface(self) -> None:
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(14,14,14,14)
+        layout.setContentsMargins(14, 14, 14, 14)
         layout.setSpacing(7)
 
         title = QLabel("Geometry")
-        title.setStyleSheet("""
-        font-size:16px;
-        font-weight:bold;
-        """)
+        title.setStyleSheet(
+            """
+            font-size: 16px;
+            font-weight: bold;
+            """
+        )
 
         layout.addWidget(title)
+        layout.addSpacing(4)
 
-        self._add_slice(layout)
-        self._add_depth(layout)
-        self._add_contrast(layout)
-        self._add_thickness(layout)
-        self._add_spacing(layout)
+        self.model_width_slider, self.model_width_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Model Width",
+                minimum=50,
+                maximum=300,
+                value=180,
+            )
+        )
 
-    def _make_slider(
+        self.slice_slider, self.slice_value = self._create_slider(
+            layout=layout,
+            label_text="Slice Count",
+            minimum=10,
+            maximum=180,
+            value=80,
+        )
+
+        self.depth_slider, self.depth_value = self._create_slider(
+            layout=layout,
+            label_text="Relief Depth",
+            minimum=2,
+            maximum=30,
+            value=12,
+        )
+
+        self.contrast_slider, self.contrast_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Depth Contrast",
+                minimum=5,
+                maximum=30,
+                value=10,
+            )
+        )
+
+        self.thickness_slider, self.thickness_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Slice Thickness",
+                minimum=2,
+                maximum=30,
+                value=8,
+            )
+        )
+
+        self.spacing_slider, self.spacing_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Slice Spacing",
+                minimum=0,
+                maximum=50,
+                value=10,
+            )
+        )
+
+        layout.addSpacing(10)
+
+        base_title = QLabel("Base Plate")
+        base_title.setStyleSheet(
+            """
+            font-size: 14px;
+            font-weight: bold;
+            """
+        )
+
+        self.base_enabled_checkbox = QCheckBox(
+            "Enable Base Plate"
+        )
+        self.base_enabled_checkbox.setChecked(True)
+
+        self.base_thickness_slider, self.base_thickness_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Base Thickness",
+                minimum=5,
+                maximum=50,
+                value=20,
+            )
+        )
+
+        self.base_margin_slider, self.base_margin_value = (
+            self._create_slider(
+                layout=layout,
+                label_text="Base Margin",
+                minimum=0,
+                maximum=50,
+                value=10,
+            )
+        )
+
+        layout.insertWidget(
+            layout.indexOf(self.base_thickness_slider) - 1,
+            base_title,
+        )
+        layout.insertWidget(
+            layout.indexOf(self.base_thickness_slider) - 1,
+            self.base_enabled_checkbox,
+        )
+
+        self._update_value_labels()
+        self._update_base_controls()
+
+    def _create_slider(
         self,
-        layout,
-        text,
-        minimum,
-        maximum,
-        value,
-        callback,
-    ):
-
-        label = QLabel(text)
+        layout: QVBoxLayout,
+        label_text: str,
+        minimum: int,
+        maximum: int,
+        value: int,
+    ) -> tuple[QSlider, QLabel]:
+        label = QLabel(label_text)
 
         slider = QSlider(Qt.Horizontal)
         slider.setRange(minimum, maximum)
@@ -62,120 +166,148 @@ class GeometryGroup(QFrame):
         value_label = QLabel()
         value_label.setAlignment(Qt.AlignRight)
 
-        slider.valueChanged.connect(callback)
-
         layout.addWidget(label)
         layout.addWidget(slider)
         layout.addWidget(value_label)
 
         return slider, value_label
 
-    def _add_slice(self, layout):
-
-        self.slice_slider, self.slice_value = self._make_slider(
-            layout,
-            "Slice Count",
-            10,
-            180,
-            80,
-            self._slice_changed,
+    def _connect_signals(self) -> None:
+        sliders = (
+            self.model_width_slider,
+            self.slice_slider,
+            self.depth_slider,
+            self.contrast_slider,
+            self.thickness_slider,
+            self.spacing_slider,
+            self.base_thickness_slider,
+            self.base_margin_slider,
         )
 
-        self._slice_changed(80)
+        for slider in sliders:
+            slider.valueChanged.connect(
+                self._on_settings_changed
+            )
 
-    def _add_depth(self, layout):
-
-        self.depth_slider, self.depth_value = self._make_slider(
-            layout,
-            "Relief Depth",
-            2,
-            30,
-            12,
-            self._depth_changed,
+        self.base_enabled_checkbox.toggled.connect(
+            self._on_base_enabled_changed
         )
 
-        self._depth_changed(12)
+    def _on_settings_changed(self, _value: int) -> None:
+        self._update_value_labels()
+        self.settings_changed.emit()
 
-    def _add_contrast(self, layout):
+    def _on_base_enabled_changed(
+        self,
+        _checked: bool,
+    ) -> None:
+        self._update_base_controls()
+        self.settings_changed.emit()
 
-        self.contrast_slider, self.contrast_value = self._make_slider(
-            layout,
-            "Depth Contrast",
-            5,
-            30,
-            10,
-            self._contrast_changed,
+    def _update_value_labels(self) -> None:
+        self.model_width_value.setText(
+            f"{self.model_width_slider.value()} mm"
         )
 
-        self._contrast_changed(10)
-
-    def _add_thickness(self, layout):
-
-        self.thickness_slider, self.thickness_value = self._make_slider(
-            layout,
-            "Slice Thickness",
-            2,
-            30,
-            8,
-            self._thickness_changed,
+        self.slice_value.setText(
+            str(self.slice_slider.value())
         )
 
-        self._thickness_changed(8)
-
-    def _add_spacing(self, layout):
-
-        self.spacing_slider, self.spacing_value = self._make_slider(
-            layout,
-            "Slice Spacing",
-            0,
-            50,
-            10,
-            self._spacing_changed,
+        self.depth_value.setText(
+            f"{self.depth_slider.value()} mm"
         )
 
-        self._spacing_changed(10)
+        self.contrast_value.setText(
+            f"{self.contrast_slider.value() / 10.0:.1f}"
+        )
 
-    def _slice_changed(self, value):
-        self.slice_value.setText(str(value))
-        self.settings_changed.emit()
+        self.thickness_value.setText(
+            f"{self.thickness_slider.value() / 10.0:.1f} mm"
+        )
 
-    def _depth_changed(self, value):
-        self.depth_value.setText(f"{value} mm")
-        self.settings_changed.emit()
+        self.spacing_value.setText(
+            f"{self.spacing_slider.value() / 10.0:.1f} mm"
+        )
 
-    def _contrast_changed(self, value):
-        self.contrast_value.setText(f"{value/10:.1f}")
-        self.settings_changed.emit()
+        self.base_thickness_value.setText(
+            f"{self.base_thickness_slider.value() / 10.0:.1f} mm"
+        )
 
-    def _thickness_changed(self, value):
-        self.thickness_value.setText(f"{value/10:.1f} mm")
-        self.settings_changed.emit()
+        self.base_margin_value.setText(
+            f"{self.base_margin_slider.value() / 10.0:.1f} mm"
+        )
 
-    def _spacing_changed(self, value):
-        self.spacing_value.setText(f"{value/10:.1f} mm")
-        self.settings_changed.emit()
+    def _update_base_controls(self) -> None:
+        enabled = self.base_enabled_checkbox.isChecked()
 
-    def slice_count(self):
+        self.base_thickness_slider.setEnabled(enabled)
+        self.base_margin_slider.setEnabled(enabled)
+
+    def model_width(self) -> float:
+        return float(
+            self.model_width_slider.value()
+        )
+
+    def slice_count(self) -> int:
         return self.slice_slider.value()
 
-    def relief_depth(self):
-        return self.depth_slider.value()
+    def relief_depth(self) -> float:
+        return float(
+            self.depth_slider.value()
+        )
 
-    def depth_contrast(self):
-        return self.contrast_slider.value()/10
+    def depth_contrast(self) -> float:
+        return (
+            self.contrast_slider.value()
+            / 10.0
+        )
 
-    def slice_thickness(self):
-        return self.thickness_slider.value()/10
+    def slice_thickness(self) -> float:
+        return (
+            self.thickness_slider.value()
+            / 10.0
+        )
 
-    def slice_spacing(self):
-        return self.spacing_slider.value()/10
+    def slice_spacing(self) -> float:
+        return (
+            self.spacing_slider.value()
+            / 10.0
+        )
 
-    def set_busy(self, busy):
+    def base_plate_enabled(self) -> bool:
+        return self.base_enabled_checkbox.isChecked()
 
+    def base_plate_thickness(self) -> float:
+        return (
+            self.base_thickness_slider.value()
+            / 10.0
+        )
+
+    def base_plate_margin(self) -> float:
+        return (
+            self.base_margin_slider.value()
+            / 10.0
+        )
+
+    def set_busy(self, busy: bool) -> None:
         enabled = not busy
 
+        self.model_width_slider.setEnabled(enabled)
         self.slice_slider.setEnabled(enabled)
         self.depth_slider.setEnabled(enabled)
         self.contrast_slider.setEnabled(enabled)
         self.thickness_slider.setEnabled(enabled)
         self.spacing_slider.setEnabled(enabled)
+        self.base_enabled_checkbox.setEnabled(enabled)
+
+        base_controls_enabled = (
+            enabled
+            and self.base_enabled_checkbox.isChecked()
+        )
+
+        self.base_thickness_slider.setEnabled(
+            base_controls_enabled
+        )
+        self.base_margin_slider.setEnabled(
+            base_controls_enabled
+        )

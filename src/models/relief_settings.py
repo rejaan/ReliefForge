@@ -15,7 +15,6 @@ class ReliefSettings:
     slice_spacing_mm: float = 1.0
     depth_contrast: float = 1.0
 
-    # Gemeinsame Grundplatte
     base_plate_enabled: bool = True
     base_plate_thickness_mm: float = 2.0
     base_plate_margin_mm: float = 1.0
@@ -26,3 +25,5 @@ class ReliefSettings:
     invert: bool = True
     blur_kernel: int = 3
     equalize_histogram: bool = True
+
+    engine_version: str = "v3"

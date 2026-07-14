@@ -14,7 +14,7 @@ from src.models.relief_settings import ReliefSettings
 
 
 class ReliefGeneratorV3:
-    """Generates sliced relief meshes using individual lamellae."""
+    """Generates sliced relief meshes with evenly spaced lamellae."""
 
     @staticmethod
     def generate_mesh(
@@ -30,21 +30,12 @@ class ReliefGeneratorV3:
 
         ReliefGeneratorV3._validate_settings(settings)
 
-        height_map = ImageProcessor.load(str(path))
-
-        if settings.equalize_histogram:
-            height_map = ImageProcessor.equalize(height_map)
-
-        if settings.blur_kernel > 1:
-            kernel_size = int(settings.blur_kernel)
-
-            if kernel_size % 2 == 0:
-                kernel_size += 1
-
-            height_map = ImageProcessor.blur(
-                height_map,
-                kernel_size=kernel_size,
-            )
+        height_map = ImageProcessor.prepare(
+            image_path=str(path),
+            equalize=settings.equalize_histogram,
+            blur_kernel=settings.blur_kernel,
+            adaptive_depth=True,
+        )
 
         profiles = ProfileGenerator.generate(
             height_map=height_map,
@@ -57,7 +48,7 @@ class ReliefGeneratorV3:
             )
 
         source_width = max(
-            float(profiles[-1].x - profiles[0].x),
+            float(height_map.width - 1),
             1.0,
         )
 
@@ -89,7 +80,9 @@ class ReliefGeneratorV3:
         mesh = TrimeshBuilder.build(mesh_data)
 
         if mesh.is_empty:
-            raise ValueError("Generated V3 mesh is empty.")
+            raise ValueError(
+                "Generated V3 mesh is empty."
+            )
 
         return mesh
 
@@ -106,14 +99,14 @@ class ReliefGeneratorV3:
 
         slice_count = len(ordered_profiles)
 
-        nominal_pitch = (
+        pitch = (
             settings.model_width_mm
             / float(slice_count - 1)
         )
 
         maximum_thickness = max(
             0.1,
-            nominal_pitch - settings.slice_spacing_mm,
+            pitch - settings.slice_spacing_mm,
         )
 
         actual_thickness = min(
@@ -132,13 +125,13 @@ class ReliefGeneratorV3:
 
         lamellas: list[Lamella] = []
 
-        for profile, center_x in zip(
+        for profile, center_x_mm in zip(
             ordered_profiles,
             center_positions,
         ):
             lamella = LamellaBuilder.build(
                 profile=profile,
-                center_x_mm=float(center_x),
+                center_x_mm=float(center_x_mm),
                 model_height_mm=model_height_mm,
                 base_thickness_mm=settings.base_thickness_mm,
                 relief_depth_mm=settings.relief_depth_mm,
