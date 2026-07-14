@@ -14,7 +14,7 @@ from src.models.relief_settings import ReliefSettings
 
 
 class ReliefGeneratorV3:
-    """Generates sliced relief meshes using individual Lamella objects."""
+    """Generates sliced relief meshes using individual lamellae."""
 
     @staticmethod
     def generate_mesh(
@@ -77,13 +77,19 @@ class ReliefGeneratorV3:
             model_height_mm=model_height_mm,
         )
 
-        mesh_data = MeshAssembler.build(lamellas)
+        mesh_data = MeshAssembler.build(
+            lamellas=lamellas,
+            base_plate_enabled=settings.base_plate_enabled,
+            base_plate_thickness_mm=(
+                settings.base_plate_thickness_mm
+            ),
+            base_plate_margin_mm=settings.base_plate_margin_mm,
+        )
+
         mesh = TrimeshBuilder.build(mesh_data)
 
         if mesh.is_empty:
-            raise ValueError(
-                "Generated V3 mesh is empty."
-            )
+            raise ValueError("Generated V3 mesh is empty.")
 
         return mesh
 
@@ -95,7 +101,6 @@ class ReliefGeneratorV3:
     ) -> list[Lamella]:
         ordered_profiles = list(profiles)
 
-        # Korrigiert die horizontale Spiegelung.
         if settings.mirror_horizontal:
             ordered_profiles.reverse()
 
@@ -186,9 +191,19 @@ class ReliefGeneratorV3:
                 "Depth contrast must be greater than zero."
             )
 
+        if settings.base_plate_thickness_mm < 0:
+            raise ValueError(
+                "Base plate thickness cannot be negative."
+            )
+
+        if settings.base_plate_margin_mm < 0:
+            raise ValueError(
+                "Base plate margin cannot be negative."
+            )
+
         if not 0.0 <= settings.background_cutoff < 1.0:
             raise ValueError(
-                "Background cutoff must be between 0.0 and 1.0."
+                "Background cutoff must be between 0 and 1."
             )
 
     @staticmethod

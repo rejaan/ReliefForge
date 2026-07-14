@@ -13,14 +13,14 @@ class ReliefSettings:
 
     slice_thickness_mm: float = 0.8
     slice_spacing_mm: float = 1.0
-
     depth_contrast: float = 1.0
 
-    # Korrigiert die spiegelverkehrte Darstellung.
-    mirror_horizontal: bool = True
+    # Gemeinsame Grundplatte
+    base_plate_enabled: bool = True
+    base_plate_thickness_mm: float = 2.0
+    base_plate_margin_mm: float = 1.0
 
-    # Werte unterhalb dieser Reliefstärke werden flach.
-    # 0.08 entspricht etwa 8 %.
+    mirror_horizontal: bool = True
     background_cutoff: float = 0.08
 
     invert: bool = True
