@@ -1,3 +1,6 @@
+from pathlib import Path
+
+import trimesh
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QFileDialog,
@@ -11,6 +14,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from src.engine.export import STLExporter
 from src.engine.relief_generator import ReliefGenerator
 from src.engine.relief_generator_v2 import ReliefGeneratorV2
 from src.models.relief_settings import ReliefSettings
@@ -25,15 +29,18 @@ class MainWindow(QMainWindow):
         super().__init__()
 
         self.image_path: str | None = None
+        self.current_mesh: trimesh.Trimesh | None = None
 
-        self.setWindowTitle("ReliefForge v0.2.1 Alpha")
+        self.setWindowTitle("ReliefForge v0.2.2 – Live Mesh")
         self.resize(1500, 900)
         self.setMinimumSize(1100, 700)
 
-        self.preview_timer = QTimer(self)
-        self.preview_timer.setSingleShot(True)
-        self.preview_timer.setInterval(200)
-        self.preview_timer.timeout.connect(self.generate_preview)
+        # Wartet kurz, nachdem ein Regler bewegt wurde.
+        # So wird das Mesh nicht bei jedem einzelnen Slider-Schritt berechnet.
+        self.live_update_timer = QTimer(self)
+        self.live_update_timer.setSingleShot(True)
+        self.live_update_timer.setInterval(400)
+        self.live_update_timer.timeout.connect(self.update_live_views)
 
         self._build_interface()
         self.statusBar().showMessage("Ready")
@@ -82,13 +89,14 @@ class MainWindow(QMainWindow):
             """
         )
 
-        version = QLabel("v0.2.1 Alpha")
+        version = QLabel("v0.2.2 – Live Mesh")
         version.setStyleSheet("color: #888888;")
 
         self.open_button = QPushButton("Open Image")
         self.open_button.clicked.connect(self.open_image)
 
         slice_label = QLabel("Slice Count")
+
         self.slice_slider = QSlider(Qt.Horizontal)
         self.slice_slider.setRange(20, 180)
         self.slice_slider.setValue(80)
@@ -99,9 +107,10 @@ class MainWindow(QMainWindow):
         self.slice_slider.valueChanged.connect(
             lambda value: self.slice_value.setText(str(value))
         )
-        self.slice_slider.valueChanged.connect(self.schedule_preview)
+        self.slice_slider.valueChanged.connect(self.schedule_live_update)
 
         depth_label = QLabel("Relief Depth")
+
         self.depth_slider = QSlider(Qt.Horizontal)
         self.depth_slider.setRange(2, 30)
         self.depth_slider.setValue(12)
@@ -112,12 +121,12 @@ class MainWindow(QMainWindow):
         self.depth_slider.valueChanged.connect(
             lambda value: self.depth_value.setText(f"{value} mm")
         )
-        self.depth_slider.valueChanged.connect(self.schedule_preview)
+        self.depth_slider.valueChanged.connect(self.schedule_live_update)
 
-        self.preview_button = QPushButton("Generate Preview")
-        self.preview_button.clicked.connect(self.generate_preview)
+        self.refresh_button = QPushButton("Refresh 2D + 3D")
+        self.refresh_button.clicked.connect(self.update_live_views)
 
-        self.export_button = QPushButton("Generate 3D + Export STL")
+        self.export_button = QPushButton("Export STL")
         self.export_button.clicked.connect(self.export_stl)
 
         layout.addWidget(title)
@@ -136,12 +145,14 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.depth_value)
 
         layout.addStretch()
-        layout.addWidget(self.preview_button)
+        layout.addWidget(self.refresh_button)
         layout.addWidget(self.export_button)
 
         return sidebar
 
     def create_settings(self) -> ReliefSettings:
+        """Creates the current engine settings from the UI controls."""
+
         return ReliefSettings(
             slice_count=self.slice_slider.value(),
             model_width_mm=180.0,
@@ -152,9 +163,18 @@ class MainWindow(QMainWindow):
             equalize_histogram=True,
         )
 
-    def schedule_preview(self) -> None:
-        if self.image_path:
-            self.preview_timer.start()
+    def schedule_live_update(self) -> None:
+        """Schedules a combined 2D and 3D update."""
+
+        if not self.image_path:
+            return
+
+        # Das gespeicherte Mesh entspricht nach einer Änderung
+        # nicht mehr den aktuellen Einstellungen.
+        self.current_mesh = None
+
+        self.statusBar().showMessage("Waiting for parameter changes...")
+        self.live_update_timer.start()
 
     def open_image(self) -> None:
         filename, _ = QFileDialog.getOpenFileName(
@@ -168,32 +188,79 @@ class MainWindow(QMainWindow):
             return
 
         self.image_path = filename
-        self.image_viewer.load_image(filename)
-        self.statusBar().showMessage(f"Image loaded: {filename}")
-        self.generate_preview()
+        self.current_mesh = None
 
-    def generate_preview(self) -> None:
+        self.image_viewer.load_image(filename)
+
+        image_name = Path(filename).name
+        self.statusBar().showMessage(f"Image loaded: {image_name}")
+
+        # Nach dem Öffnen sofort 2D- und 3D-Vorschau erzeugen.
+        self.update_live_views()
+
+    def update_live_views(self) -> None:
+        """Updates both the 2D preview and the interactive 3D mesh."""
+
         if not self.image_path:
             return
 
-        try:
-            pixmap = ReliefGenerator.create_slice_preview(
-                image_path=self.image_path,
-                slice_count=self.slice_slider.value(),
-                relief_height=self.depth_slider.value(),
-            )
+        self.live_update_timer.stop()
 
-            self.image_viewer.show_pixmap(pixmap)
-            self.statusBar().showMessage("2D preview updated")
+        try:
+            self._set_generation_state(True)
+            self.statusBar().showMessage("Updating 2D and 3D preview...")
+
+            self.update_2d_preview()
+            self.update_3d_mesh()
+
+            if self.current_mesh is not None:
+                vertex_count = len(self.current_mesh.vertices)
+                face_count = len(self.current_mesh.faces)
+
+                self.statusBar().showMessage(
+                    f"Ready — {vertex_count:,} vertices, "
+                    f"{face_count:,} faces"
+                )
 
         except Exception as error:
-            QMessageBox.critical(
-                self,
-                "Preview error",
-                str(error),
-            )
+            self.current_mesh = None
+            self.statusBar().showMessage(f"Preview failed: {error}")
+
+        finally:
+            self._set_generation_state(False)
+
+    def update_2d_preview(self) -> None:
+        """Generates the 2D slice preview."""
+
+        if not self.image_path:
+            return
+
+        pixmap = ReliefGenerator.create_slice_preview(
+            image_path=self.image_path,
+            slice_count=self.slice_slider.value(),
+            relief_height=self.depth_slider.value(),
+        )
+
+        self.image_viewer.show_pixmap(pixmap)
+
+    def update_3d_mesh(self) -> None:
+        """Generates the current 3D mesh and displays it directly."""
+
+        if not self.image_path:
+            return
+
+        settings = self.create_settings()
+
+        self.current_mesh = ReliefGeneratorV2.generate_mesh(
+            image_path=self.image_path,
+            settings=settings,
+        )
+
+        self.mesh_viewer.show_mesh(self.current_mesh)
 
     def export_stl(self) -> None:
+        """Exports the current in-memory mesh as an STL file."""
+
         if not self.image_path:
             QMessageBox.warning(
                 self,
@@ -213,33 +280,34 @@ class MainWindow(QMainWindow):
             return
 
         try:
-            self.export_button.setEnabled(False)
-            self.export_button.setText("Generating...")
-            self.statusBar().showMessage("Generating 3D mesh...")
+            self._set_generation_state(True)
+            self.statusBar().showMessage("Preparing STL export...")
 
-            settings = self.create_settings()
+            # Falls noch kein aktuelles Mesh existiert,
+            # wird es vor dem Export neu berechnet.
+            if self.current_mesh is None:
+                self.update_3d_mesh()
 
-            mesh = ReliefGeneratorV2.export_stl(
-                image_path=self.image_path,
+            if self.current_mesh is None or self.current_mesh.is_empty:
+                raise ValueError("No valid mesh is available for export.")
+
+            STLExporter.export(
+                mesh=self.current_mesh,
                 output_path=output_path,
-                settings=settings,
             )
 
-            self.mesh_viewer.show_mesh(mesh)
-
             self.statusBar().showMessage(
-                f"Ready — {len(mesh.vertices):,} vertices, "
-                f"{len(mesh.faces):,} faces"
+                f"STL exported: {Path(output_path).name}"
             )
 
             QMessageBox.information(
                 self,
                 "Export complete",
-                "The STL was exported and loaded into the 3D viewer.",
+                "The current 3D mesh was exported successfully.",
             )
 
         except Exception as error:
-            self.statusBar().showMessage("STL generation failed")
+            self.statusBar().showMessage("STL export failed")
 
             QMessageBox.critical(
                 self,
@@ -248,5 +316,18 @@ class MainWindow(QMainWindow):
             )
 
         finally:
-            self.export_button.setEnabled(True)
-            self.export_button.setText("Generate 3D + Export STL")
+            self._set_generation_state(False)
+
+    def _set_generation_state(self, generating: bool) -> None:
+        """Enables or disables controls while the mesh is calculated."""
+
+        self.open_button.setEnabled(not generating)
+        self.refresh_button.setEnabled(not generating)
+        self.export_button.setEnabled(not generating)
+        self.slice_slider.setEnabled(not generating)
+        self.depth_slider.setEnabled(not generating)
+
+        if generating:
+            self.refresh_button.setText("Updating...")
+        else:
+            self.refresh_button.setText("Refresh 2D + 3D")
